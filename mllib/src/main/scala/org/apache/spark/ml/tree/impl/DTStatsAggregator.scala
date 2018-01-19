@@ -84,6 +84,16 @@ private[spark] class DTStatsAggregator(
    */
   private val parentStats: Array[Double] = new Array[Double](statsSize)
 
+  private var numRows: Double = 0
+
+  def addRowCount(rows: Double) : Unit = {
+    numRows += rows
+  }
+
+  def getRowCount() : Double = {
+    numRows
+  }
+
   /**
    * Get an [[ImpurityCalculator]] for a given (node, feature, bin).
    *

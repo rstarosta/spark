@@ -325,8 +325,10 @@ class RandomForestSuite extends SparkFunSuite with MLlibTestSparkContext {
       (topNode.id, new RandomForest.NodeIndexInfo(0, None))
     )))
     val nodeStack = new mutable.ArrayStack[(Int, LearningNode)]
+    val localTrainingStack = new mutable.ArrayStack[(Int, LearningNode)]
+    val maxMemoryUsage = 100 * 1024L * 1024L
     RandomForest.findBestSplits(baggedInput, metadata, Map(0 -> topNode),
-      nodesForGroup, treeToNodeToIndexInfo, splits, nodeStack)
+      nodesForGroup, treeToNodeToIndexInfo, splits, (nodeStack, localTrainingStack), maxMemoryUsage)
 
     // don't enqueue leaf nodes into node queue
     assert(nodeStack.isEmpty)
@@ -367,8 +369,10 @@ class RandomForestSuite extends SparkFunSuite with MLlibTestSparkContext {
       (topNode.id, new RandomForest.NodeIndexInfo(0, None))
     )))
     val nodeStack = new mutable.ArrayStack[(Int, LearningNode)]
+    val localTrainingStack = new mutable.ArrayStack[(Int, LearningNode)]
+    val maxMemoryUsage = 100 * 1024L * 1024L
     RandomForest.findBestSplits(baggedInput, metadata, Map(0 -> topNode),
-      nodesForGroup, treeToNodeToIndexInfo, splits, nodeStack)
+      nodesForGroup, treeToNodeToIndexInfo, splits, (nodeStack, localTrainingStack), maxMemoryUsage)
 
     // don't enqueue a node into node queue if its impurity is 0.0
     assert(nodeStack.isEmpty)

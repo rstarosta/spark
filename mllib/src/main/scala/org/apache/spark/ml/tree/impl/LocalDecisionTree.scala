@@ -36,14 +36,14 @@ private[ml] object LocalDecisionTree {
       instanceWeights: Array[Double],
       node: LearningNode,
       metadata: DecisionTreeMetadata,
-      splits: Array[Array[Split]]): Node = {
+      splits: Array[Array[Split]]): LearningNode = {
 
     // The case with 1 node (depth = 0) is handled separately.
     // This allows all iterations in the depth > 0 case to use the same code.
     // TODO: Check that learning works when maxDepth > 0 but learning stops at 1 node (because of
     //       other parameters).
     if (metadata.maxDepth == 0) {
-      return node.toNode
+      return node
     }
 
     // Prepare column store.
@@ -81,7 +81,7 @@ private[ml] object LocalDecisionTree {
       instanceWeights: Array[Double],
       labels: Array[Double],
       metadata: DecisionTreeMetadata,
-      splits: Array[Array[Split]]): Node = {
+      splits: Array[Array[Split]]): LearningNode = {
 
     // Sort each column by decision tree node.
     val colStore: Array[FeatureColumn] = colStoreInit.zipWithIndex.map { case (col, featureIndex) =>
@@ -120,7 +120,7 @@ private[ml] object LocalDecisionTree {
     }
 
     // Done with learning
-    rootNode.toNode
+    rootNode
   }
 
   /**

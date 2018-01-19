@@ -49,8 +49,8 @@ class LocalTreeIntegrationSuite extends SparkFunSuite with MLlibTestSparkContext
   private def testEquivalence(train: DataFrame, testParams: Map[String, Any]): Unit = {
     val distribTree = setParams(new DecisionTreeRegressor(), testParams)
     val localTree = setParams(new LocalDecisionTreeRegressor(), testParams)
-    val model = distribTree.fit(train)
     val localModel = localTree.fit(train)
+    val model = distribTree.fit(train)
     TreeTests.checkEqual(localModel, model)
   }
 

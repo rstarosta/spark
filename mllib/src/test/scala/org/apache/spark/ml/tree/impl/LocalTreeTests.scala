@@ -89,7 +89,7 @@ private[impl] object LocalTreeTests extends Logging {
     // Fit tree
     val rootNode = LocalDecisionTree.fitNode(treeInput, instanceWeights,
       initialRoot, metadata, splits)
-    finalizeTree(rootNode, strategy.algo, strategy.numClasses, numFeatures, parentUID)
+    finalizeTree(rootNode.toNode, strategy.algo, strategy.numClasses, numFeatures, parentUID)
   }
 
   /**

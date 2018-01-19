@@ -170,6 +170,7 @@ private[spark] object RandomForest extends Logging {
       workers on each iteration; see topNodesForGroup below.
      */
     val nodeStack = new mutable.ArrayStack[(Int, LearningNode)]
+    val localTrainingStack = new mutable.ArrayStack[(Int, LearningNode)]
 
     val rng = new Random()
     rng.setSeed(seed)
@@ -196,11 +197,39 @@ private[spark] object RandomForest extends Logging {
       // Choose node splits, and enqueue new nodes as needed.
       timer.start("findBestSplits")
       RandomForest.findBestSplits(baggedInput, metadata, topNodesForGroup, nodesForGroup,
-        treeToNodeToIndexInfo, splits, nodeStack, timer, nodeIdCache)
+        treeToNodeToIndexInfo, splits, (nodeStack, localTrainingStack), maxMemoryUsage,
+        timer, nodeIdCache)
       timer.stop("findBestSplits")
     }
 
+    while (localTrainingStack.nonEmpty) {
+      val (treeIndex, node) = localTrainingStack.pop()
+      val pointsForTree = baggedInput.zip(nodeIdCache.get.nodeIdsForInstances).mapPartitions(points => {
+        val meh = mutable.Set[TreePoint]()
+        points.foreach(point => {
+          val bagged = point._1
+          val trees = point._2
+          if(trees(treeIndex) == node.id) {
+            meh.add(bagged.datum)
+          }
+        })
+        meh.iterator
+      }).collect()
+
+      val instanceWeights = Array.fill[Double](pointsForTree.length)(1.0)
+      val localNode = LocalDecisionTree.fitNode(pointsForTree, instanceWeights, node, metadata, splits)
+
+      val parent = LearningNode.getNode(LearningNode.parentIndex(node.id), topNodes(treeIndex))
+
+      if(LearningNode.isLeftChild(node.id)) {
+        parent.leftChild = Some(localNode)
+      } else {
+        parent.rightChild = Some(localNode)
+      }
+    }
     baggedInput.unpersist()
+
+
 
     timer.stop("total")
 
@@ -343,7 +372,7 @@ private[spark] object RandomForest extends Logging {
    *                              where nodeIndexInfo stores the index in the group and the
    *                              feature subsets (if using feature subsets).
    * @param splits possible splits for all features, indexed (numFeatures)(numSplits)
-   * @param nodeStack  Queue of nodes to split, with values (treeIndex, node).
+   * @param stacks  Queue of nodes to split, with values (treeIndex, node).
    *                   Updated with new non-leaf nodes which are created.
    * @param nodeIdCache Node Id cache containing an RDD of Array[Int] where
    *                    each value in the array is the data point's node Id
@@ -358,7 +387,8 @@ private[spark] object RandomForest extends Logging {
       nodesForGroup: Map[Int, Array[LearningNode]],
       treeToNodeToIndexInfo: Map[Int, Map[Int, NodeIndexInfo]],
       splits: Array[Array[Split]],
-      nodeStack: mutable.ArrayStack[(Int, LearningNode)],
+      stacks: (mutable.ArrayStack[(Int, LearningNode)], mutable.ArrayStack[(Int, LearningNode)]),
+      maxMemoryUsage: Long,
       timer: TimeTracker = new TimeTracker,
       nodeIdCache: Option[NodeIdCache] = None): Unit = {
 
@@ -394,6 +424,9 @@ private[spark] object RandomForest extends Logging {
       metadata.isMulticlassWithCategoricalFeatures)
     logDebug("using nodeIdCache = " + nodeIdCache.nonEmpty.toString)
 
+    val nodeStack = stacks._1
+    val localTrainingStack = stacks._2
+
     /**
      * Performs a sequential aggregation over a partition for a particular tree and node.
      *
@@ -422,6 +455,7 @@ private[spark] object RandomForest extends Logging {
             metadata.unorderedFeatures, instanceWeight, featuresForNode)
         }
         agg(aggNodeIndex).updateParent(baggedPoint.datum.label, instanceWeight)
+        agg(aggNodeIndex).addRowCount(1.0)
       }
     }
 
@@ -551,7 +585,7 @@ private[spark] object RandomForest extends Logging {
         // find best split for each node
         val (split: Split, stats: ImpurityStats) =
           RandomForest.binsToBestSplit(aggStats, splits, featuresForNode, nodes(nodeIndex))
-        (nodeIndex, (split, stats))
+        (nodeIndex, (split, stats, aggStats.getRowCount()))
     }.collectAsMap()
 
     timer.stop("chooseSplits")
@@ -569,7 +603,7 @@ private[spark] object RandomForest extends Logging {
         val nodeIndex = node.id
         val nodeInfo = treeToNodeToIndexInfo(treeIndex)(nodeIndex)
         val aggNodeIndex = nodeInfo.nodeIndexInGroup
-        val (split: Split, stats: ImpurityStats) =
+        val (split: Split, stats: ImpurityStats, numRows: Double) =
           nodeToBestSplits(aggNodeIndex)
         logDebug("best split = " + split)
 
@@ -597,12 +631,23 @@ private[spark] object RandomForest extends Logging {
             nodeIdUpdaters(treeIndex).put(nodeIndex, nodeIndexUpdater)
           }
 
+          // TODO: Calculate more precisely, this probably won't fit
+          val memUsage = 2 * numRows * (metadata.numFeatures * 4L + (1 + metadata.numTrees) * 8L)
+          val canSplitLocally = memUsage < maxMemoryUsage
           // enqueue left child and right child if they are not leaves
           if (!leftChildIsLeaf) {
-            nodeStack.push((treeIndex, node.leftChild.get))
+            if (canSplitLocally) {
+              localTrainingStack.push((treeIndex, node.leftChild.get))
+            } else {
+              nodeStack.push((treeIndex, node.leftChild.get))
+            }
           }
           if (!rightChildIsLeaf) {
-            nodeStack.push((treeIndex, node.rightChild.get))
+            if (canSplitLocally) {
+              localTrainingStack.push((treeIndex, node.rightChild.get))
+            } else {
+              nodeStack.push((treeIndex, node.rightChild.get))
+            }
           }
 
           logDebug("leftChildIndex = " + node.leftChild.get.id +
