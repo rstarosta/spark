@@ -60,6 +60,12 @@ class LocalTreeIntegrationSuite extends SparkFunSuite with MLlibTestSparkContext
     testEquivalence(df, TreeTests.allParamSettings)
   }
 
+  test("Local & distributed training produce the same tree on a slightly larger toy dataset") {
+    val data = sc.parallelize(Range(0, 10).map(x => LabeledPoint(x, Vectors.dense(x))))
+    val df = spark.createDataFrame(data)
+    testEquivalence(df, medDepthTreeSettings)
+  }
+
   test("Local & distributed training produce the same tree on a larger toy dataset") {
     val data = sc.parallelize(Range(0, 64).map(x => LabeledPoint(x, Vectors.dense(x))))
     val df = spark.createDataFrame(data)

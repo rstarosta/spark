@@ -113,7 +113,7 @@ private[spark] object ImpurityStats {
    * minimum number of instances per node.
    */
   def getInvalidImpurityStats(impurityCalculator: ImpurityCalculator): ImpurityStats = {
-    new ImpurityStats(Double.MinValue, impurity = impurityCalculator.calculate(),
+    new ImpurityStats(Double.MinValue, impurity = -1,
       impurityCalculator, null, null, false)
   }
 

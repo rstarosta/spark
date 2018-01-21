@@ -217,10 +217,15 @@ private[spark] object RandomForest extends Logging {
       }).collect()
 
       val instanceWeights = Array.fill[Double](pointsForTree.length)(1.0)
-      val localNode = LocalDecisionTree.fitNode(pointsForTree, instanceWeights, node, metadata, splits)
+
+      val currentLevel = LearningNode.indexToLevel(node.id)
+      val newStrategy = strategy.copy
+      newStrategy.setMaxDepth(newStrategy.getMaxDepth - currentLevel)
+
+      val localMetadata = DecisionTreeMetadata.buildMetadata(retaggedInput, newStrategy, numTrees, featureSubsetStrategy)
+      val localNode = LocalDecisionTree.fitNode(pointsForTree, instanceWeights, node, localMetadata, splits)
 
       val parent = LearningNode.getNode(LearningNode.parentIndex(node.id), topNodes(treeIndex))
-
       if(LearningNode.isLeftChild(node.id)) {
         parent.leftChild = Some(localNode)
       } else {
