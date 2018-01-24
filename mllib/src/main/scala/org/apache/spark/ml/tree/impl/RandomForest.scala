@@ -171,6 +171,7 @@ private[spark] object RandomForest extends Logging {
      */
     val nodeStack = new mutable.ArrayStack[(Int, LearningNode)]
     val localTrainingStack = new mutable.ArrayStack[(Int, LearningNode)]
+    val localTrainingSets = Array.fill[mutable.Set[LearningNode]](numTrees)(mutable.Set.empty)
 
     val rng = new Random()
     rng.setSeed(seed)
@@ -180,6 +181,8 @@ private[spark] object RandomForest extends Logging {
     Range(0, numTrees).foreach(treeIndex => nodeStack.push((treeIndex, topNodes(treeIndex))))
 
     timer.stop("init")
+
+    val newStrategy = strategy.copy
 
     while (nodeStack.nonEmpty) {
       // Collect some nodes to split, and choose features for each node (if subsampling).
@@ -197,41 +200,110 @@ private[spark] object RandomForest extends Logging {
       // Choose node splits, and enqueue new nodes as needed.
       timer.start("findBestSplits")
       RandomForest.findBestSplits(baggedInput, metadata, topNodesForGroup, nodesForGroup,
-        treeToNodeToIndexInfo, splits, (nodeStack, localTrainingStack), maxMemoryUsage,
-        timer, nodeIdCache)
+        treeToNodeToIndexInfo, splits, (nodeStack, localTrainingStack, localTrainingSets),
+        maxMemoryUsage, timer, nodeIdCache)
       timer.stop("findBestSplits")
     }
 
-    while (localTrainingStack.nonEmpty) {
-      val (treeIndex, node) = localTrainingStack.pop()
-      val pointsForTree = baggedInput.zip(nodeIdCache.get.nodeIdsForInstances).mapPartitions(points => {
-        val meh = mutable.Set[TreePoint]()
-        points.foreach(point => {
-          val bagged = point._1
-          val trees = point._2
-          if(trees(treeIndex) == node.id) {
-            meh.add(bagged.datum)
+    Range(0, numTrees).foreach(treeIndex => {
+      baggedInput.zip(nodeIdCache.get.nodeIdsForInstances)
+        .map(x => (x._2(treeIndex), x._1.datum))
+        .groupByKey()
+        .mapPartitions(partition => {
+          val finishedNodes = mutable.Set[LearningNode]()
+          partition.foreach(nodePoints => {
+            val points = nodePoints._2.toArray
+            val node = LearningNode.getNode(nodePoints._1, topNodes(treeIndex))
+
+            val currentLevel = LearningNode.indexToLevel(nodePoints._1)
+            newStrategy.setMaxDepth(strategy.getMaxDepth - currentLevel)
+//
+            val instanceWeights = Array.fill[Double](points.length)(1.0)
+//            val localMetadata = DecisionTreeMetadata.buildMetadata(retaggedInput,
+//              newStrategy, numTrees, featureSubsetStrategy)
+
+            val localNode = LocalDecisionTree.fitNode(points, instanceWeights, node,
+              metadata, splits)
+
+            finishedNodes.add(localNode)
+
+//
+//            val parent = LearningNode.getNode(
+//              LearningNode.parentIndex(node.id), topNodes(treeIndex))
+//            if(LearningNode.isLeftChild(node.id)) {
+//              parent.leftChild = Some(localNode)
+//            } else {
+//              parent.rightChild = Some(localNode)
+//            }
+
+          })
+          finishedNodes.iterator
+        }).foreach(learningNode => {
+          println("done " + learningNode.leftChild.get.toNode)
+          val parent = LearningNode.getNode(
+            LearningNode.parentIndex(learningNode.id), topNodes(treeIndex))
+          if(LearningNode.isLeftChild(learningNode.id)) {
+            parent.leftChild = Some(learningNode)
+          } else {
+            parent.rightChild = Some(learningNode)
           }
-        })
-        meh.iterator
-      }).collect()
+      })
+    })
 
-      val instanceWeights = Array.fill[Double](pointsForTree.length)(1.0)
+    println(topNodes(0).leftChild.get.leftChild)
 
-      val currentLevel = LearningNode.indexToLevel(node.id)
-      val newStrategy = strategy.copy
-      newStrategy.setMaxDepth(newStrategy.getMaxDepth - currentLevel)
+//    while (localTrainingStack.nonEmpty) {
+//      val (treeIndex, node) = localTrainingStack.pop()
+//      val pointsForTree = baggedInput.zip(nodeIdCache.get.nodeIdsForInstances)
+//                          .mapPartitions(points => {
+//        val meh = mutable.Set[TreePoint]()
+//        points.foreach(point => {
+//          val bagged = point._1
+//          val trees = point._2
+//          if(trees(treeIndex) == node.id) {
+//            meh.add(bagged.datum)
+//          }
+//        })
+//        meh.iterator
+//      }).collect()
 
-      val localMetadata = DecisionTreeMetadata.buildMetadata(retaggedInput, newStrategy, numTrees, featureSubsetStrategy)
-      val localNode = LocalDecisionTree.fitNode(pointsForTree, instanceWeights, node, localMetadata, splits)
 
-      val parent = LearningNode.getNode(LearningNode.parentIndex(node.id), topNodes(treeIndex))
-      if(LearningNode.isLeftChild(node.id)) {
-        parent.leftChild = Some(localNode)
-      } else {
-        parent.rightChild = Some(localNode)
-      }
-    }
+      //baggedInput.zip(nodeIdCache.get.nodeIdsForInstances).map()
+      // .groupBy(x => x._2(treeIndex)).map(x => x.)
+//      baggedInput.zip(nodeIdCache.get.nodeIdsForInstances)
+//        .map(x => (x._2(treeIndex), x._1.datum))
+//        .groupByKey()
+//        .foreachPartition(partition => {
+//          partition.foreach(nodePoints => {
+//            val points = nodePoints._2.toArray
+//
+//            val currentLevel = LearningNode.indexToLevel(nodePoints._1)
+//            newStrategy.setMaxDepth(strategy.getMaxDepth - currentLevel)
+//
+//            val instanceWeights = Array.fill[Double](points.length)(1.0)
+//            val localMetadata = DecisionTreeMetadata.buildMetadata(retaggedInput,
+//              newStrategy, numTrees, featureSubsetStrategy)
+//            val localNode = LocalDecisionTree.fitNode(points, instanceWeights, node,
+//              localMetadata, splits)
+//          })
+//        })
+
+//
+//      val currentLevel = LearningNode.indexToLevel(node.id)
+//      newStrategy.setMaxDepth(strategy.getMaxDepth - currentLevel)
+//
+//      val localMetadata = DecisionTreeMetadata.buildMetadata(retaggedInput,
+//        newStrategy, numTrees, featureSubsetStrategy)
+//      val localNode = LocalDecisionTree.fitNode(pointsForTree, instanceWeights, node,
+//        localMetadata, splits)
+//
+//      val parent = LearningNode.getNode(LearningNode.parentIndex(node.id), topNodes(treeIndex))
+//      if(LearningNode.isLeftChild(node.id)) {
+//        parent.leftChild = Some(localNode)
+//      } else {
+//        parent.rightChild = Some(localNode)
+//      }
+//    }
     baggedInput.unpersist()
 
 
@@ -392,7 +464,8 @@ private[spark] object RandomForest extends Logging {
       nodesForGroup: Map[Int, Array[LearningNode]],
       treeToNodeToIndexInfo: Map[Int, Map[Int, NodeIndexInfo]],
       splits: Array[Array[Split]],
-      stacks: (mutable.ArrayStack[(Int, LearningNode)], mutable.ArrayStack[(Int, LearningNode)]),
+      stacks: (mutable.ArrayStack[(Int, LearningNode)], mutable.ArrayStack[(Int, LearningNode)],
+        Array[mutable.Set[LearningNode]]),
       maxMemoryUsage: Long,
       timer: TimeTracker = new TimeTracker,
       nodeIdCache: Option[NodeIdCache] = None): Unit = {
@@ -431,6 +504,7 @@ private[spark] object RandomForest extends Logging {
 
     val nodeStack = stacks._1
     val localTrainingStack = stacks._2
+    val localTrainingSets = stacks._3
 
     /**
      * Performs a sequential aggregation over a partition for a particular tree and node.
@@ -643,6 +717,7 @@ private[spark] object RandomForest extends Logging {
           if (!leftChildIsLeaf) {
             if (canSplitLocally) {
               localTrainingStack.push((treeIndex, node.leftChild.get))
+              localTrainingSets(treeIndex).add(node.leftChild.get)
             } else {
               nodeStack.push((treeIndex, node.leftChild.get))
             }
@@ -650,6 +725,7 @@ private[spark] object RandomForest extends Logging {
           if (!rightChildIsLeaf) {
             if (canSplitLocally) {
               localTrainingStack.push((treeIndex, node.rightChild.get))
+              localTrainingSets(treeIndex).add(node.rightChild.get)
             } else {
               nodeStack.push((treeIndex, node.rightChild.get))
             }
