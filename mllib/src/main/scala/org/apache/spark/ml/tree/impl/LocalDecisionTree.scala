@@ -36,13 +36,16 @@ private[ml] object LocalDecisionTree {
       instanceWeights: Array[Double],
       node: LearningNode,
       metadata: DecisionTreeMetadata,
-      splits: Array[Array[Split]]): LearningNode = {
+      splits: Array[Array[Split]],
+      maxDepthOverride: Option[Int] = None): LearningNode = {
 
     // The case with 1 node (depth = 0) is handled separately.
     // This allows all iterations in the depth > 0 case to use the same code.
     // TODO: Check that learning works when maxDepth > 0 but learning stops at 1 node (because of
     //       other parameters).
-    if (metadata.maxDepth == 0) {
+    val maxDepth = maxDepthOverride.getOrElse(metadata.maxDepth)
+
+    if (maxDepth == 0) {
       return node
     }
 
@@ -59,7 +62,7 @@ private[ml] object LocalDecisionTree {
       throw new UnsupportedOperationException("Local training of a decision tree classifier is " +
         "unsupported; currently, only regression is supported")
     } else {
-      trainRegressor(node, colStoreInit, instanceWeights, labels, metadata, splits)
+      trainRegressor(node, colStoreInit, instanceWeights, labels, metadata, splits, maxDepth)
     }
   }
 
@@ -81,7 +84,8 @@ private[ml] object LocalDecisionTree {
       instanceWeights: Array[Double],
       labels: Array[Double],
       metadata: DecisionTreeMetadata,
-      splits: Array[Array[Split]]): LearningNode = {
+      splits: Array[Array[Split]],
+      maxDepth: Int): LearningNode = {
 
     // Sort each column by decision tree node.
     val colStore: Array[FeatureColumn] = colStoreInit.zipWithIndex.map { case (col, featureIndex) =>
@@ -104,14 +108,14 @@ private[ml] object LocalDecisionTree {
     var currentLevel = 0
     var doneLearning = false
 
-    while (currentLevel < metadata.maxDepth && !doneLearning) {
+    while (currentLevel < maxDepth && !doneLearning) {
       // Splits each active node if possible, returning an array of new active nodes
       val nextLevelNodes: Array[LearningNode] =
         computeBestSplits(trainingInfo, instanceWeights, labels, metadata, splits)
       // Count number of non-leaf nodes in the next level
       val estimatedRemainingActive = nextLevelNodes.count(!_.isLeaf)
       // TODO: Check to make sure we split something, and stop otherwise.
-      doneLearning = currentLevel + 1 >= metadata.maxDepth || estimatedRemainingActive == 0
+      doneLearning = currentLevel + 1 >= maxDepth || estimatedRemainingActive == 0
       if (!doneLearning) {
         // Obtain a new trainingInfo instance describing our current training status
         trainingInfo = trainingInfo.update(splits, nextLevelNodes)
