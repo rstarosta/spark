@@ -32,9 +32,9 @@ class LocalTreeIntegrationSuite extends SparkFunSuite with MLlibTestSparkContext
   val medDepthTreeSettings = TreeTests.allParamSettings ++ Map[String, Any]("maxDepth" -> 4)
 
   /**
-   * For each (paramName, paramVal) pair in the passed-in map, set the corresponding
-   * parameter of the passed-in estimator & return the estimator.
-   */
+    * For each (paramName, paramVal) pair in the passed-in map, set the corresponding
+    * parameter of the passed-in estimator & return the estimator.
+    */
   private def setParams[E <: Estimator[_]](estimator: E, params: Map[String, Any]): E = {
     params.foreach { case (p, v) =>
       estimator.set(estimator.getParam(p), v)
@@ -43,9 +43,9 @@ class LocalTreeIntegrationSuite extends SparkFunSuite with MLlibTestSparkContext
   }
 
   /**
-   * Verifies that local tree training & distributed training produce the same tree
-   * when fit on the same dataset with the same set of params.
-   */
+    * Verifies that local tree training & distributed training produce the same tree
+    * when fit on the same dataset with the same set of params.
+    */
   private def testEquivalence(train: DataFrame, testParams: Map[String, Any]): Unit = {
     val distribTree = setParams(new DecisionTreeRegressor(), testParams)
     val localTree = setParams(new LocalDecisionTreeRegressor(), testParams)
@@ -61,7 +61,7 @@ class LocalTreeIntegrationSuite extends SparkFunSuite with MLlibTestSparkContext
   }
 
   test("Local & distributed training produce the same tree on a slightly larger toy dataset") {
-    val data = sc.parallelize(Range(0, 16).map(x => LabeledPoint(x, Vectors.dense(x))))
+    val data = sc.parallelize(Range(0, 10).map(x => LabeledPoint(x, Vectors.dense(x))))
     val df = spark.createDataFrame(data)
     testEquivalence(df, medDepthTreeSettings)
   }

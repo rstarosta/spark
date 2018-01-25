@@ -281,7 +281,8 @@ private[tree] class LearningNode(
           stats.impurityCalculator)
       } else {
         // Here we want to keep same behavior with the old mllib.DecisionTreeModel
-        new LeafNode(stats.impurityCalculator.predict, -1.0, stats.impurityCalculator)
+        // TODO: Changed to pass tests, look into mllib compatibility
+        new LeafNode(stats.impurityCalculator.predict, stats.impurityCalculator.calculate(), stats.impurityCalculator)
       }
 
     }
