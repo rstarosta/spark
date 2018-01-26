@@ -21,13 +21,13 @@ import org.apache.spark.SparkFunSuite
 import org.apache.spark.ml.Estimator
 import org.apache.spark.ml.feature.LabeledPoint
 import org.apache.spark.ml.linalg.Vectors
-import org.apache.spark.ml.regression.DecisionTreeRegressor
+import org.apache.spark.ml.regression.{DecisionTreeRegressor, OptimizedDecisionTreeRegressor}
 import org.apache.spark.mllib.tree.DecisionTreeSuite
 import org.apache.spark.mllib.util.{LogisticRegressionDataGenerator, MLlibTestSparkContext}
 import org.apache.spark.sql.DataFrame
 
 /** Tests checking equivalence of trees produced by local and distributed tree training. */
-class LocalTreeIntegrationSuite extends SparkFunSuite with MLlibTestSparkContext {
+class OptimizedDecisionTreeIntegrationSuite extends SparkFunSuite with MLlibTestSparkContext {
 
   val medDepthTreeSettings = TreeTests.allParamSettings ++ Map[String, Any]("maxDepth" -> 4)
 
@@ -47,11 +47,11 @@ class LocalTreeIntegrationSuite extends SparkFunSuite with MLlibTestSparkContext
     * when fit on the same dataset with the same set of params.
     */
   private def testEquivalence(train: DataFrame, testParams: Map[String, Any]): Unit = {
-    val distribTree = setParams(new DecisionTreeRegressor(), testParams)
-    val localTree = setParams(new LocalDecisionTreeRegressor(), testParams)
-    val localModel = localTree.fit(train)
-    val model = distribTree.fit(train)
-    TreeTests.checkEqual(localModel, model)
+    val oldTree = setParams(new DecisionTreeRegressor(), testParams)
+    val newTree = setParams(new OptimizedDecisionTreeRegressor(), testParams)
+    val newModel = newTree.fit(train)
+    val oldModel = oldTree.fit(train)
+    TreeTests.checkEqual(newModel, oldModel)
   }
 
   test("Local & distributed training produce the same tree on a toy dataset") {
