@@ -59,8 +59,9 @@ private[ml] object LocalDecisionTree {
     // we should train a classifier.
     // TODO: Add support for training classifiers
     if (metadata.numClasses > 1 && metadata.numClasses <= 32) {
-      throw new UnsupportedOperationException("Local training of a decision tree classifier is " +
-        "unsupported; currently, only regression is supported")
+      trainRegressor(node, colStoreInit, instanceWeights, labels, metadata, splits, maxDepth)
+//      throw new UnsupportedOperationException("Local training of a decision tree classifier is " +
+//        "unsupported; currently, only regression is supported")
     } else {
       trainRegressor(node, colStoreInit, instanceWeights, labels, metadata, splits, maxDepth)
     }

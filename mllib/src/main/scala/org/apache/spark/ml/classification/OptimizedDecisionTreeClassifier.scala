@@ -15,10 +15,9 @@
  * limitations under the License.
  */
 
-package org.apache.spark.ml.regression
+package org.apache.spark.ml.classification
 
 import org.apache.spark.annotation.Since
-import org.apache.spark.ml.Predictor
 import org.apache.spark.ml.feature.LabeledPoint
 import org.apache.spark.ml.linalg.Vector
 import org.apache.spark.ml.param.ParamMap
@@ -32,19 +31,22 @@ import org.apache.spark.sql.Dataset
 
 
 /**
-  * <a href="http://en.wikipedia.org/wiki/Decision_tree_learning">Decision tree</a>
-  * learning algorithm for regression.
-  * It supports both continuous and categorical features.
+  * Decision tree learning algorithm (http://en.wikipedia.org/wiki/Decision_tree_learning)
+  * for classification.
+  * It supports both binary and multiclass labels, as well as both continuous and categorical
+  * features.
   */
 @Since("1.4.0")
-class OptimizedDecisionTreeRegressor @Since("1.4.0") (@Since("1.4.0") override val uid: String)
-  extends Predictor[Vector, OptimizedDecisionTreeRegressor, DecisionTreeRegressionModel]
-    with DecisionTreeRegressorParams with DefaultParamsWritable {
+class OptimizedDecisionTreeClassifier @Since("1.4.0") (
+                                               @Since("1.4.0") override val uid: String)
+  extends ProbabilisticClassifier[Vector, OptimizedDecisionTreeClassifier, DecisionTreeClassificationModel]
+    with DecisionTreeClassifierParams with DefaultParamsWritable {
 
   @Since("1.4.0")
-  def this() = this(Identifiable.randomUID("dtr"))
+  def this() = this(Identifiable.randomUID("dtc"))
 
   // Override parameter setters from parent trait for Java API compatibility.
+
   /** @group setParam */
   @Since("1.4.0")
   override def setMaxDepth(value: Int): this.type = set(maxDepth, value)
@@ -89,15 +91,19 @@ class OptimizedDecisionTreeRegressor @Since("1.4.0") (@Since("1.4.0") override v
   @Since("1.6.0")
   override def setSeed(value: Long): this.type = set(seed, value)
 
-  /** @group setParam */
-  @Since("2.0.0")
-  def setVarianceCol(value: String): this.type = set(varianceCol, value)
-
-  override protected def train(dataset: Dataset[_]): DecisionTreeRegressionModel = {
+  override protected def train(dataset: Dataset[_]): DecisionTreeClassificationModel = {
     val categoricalFeatures: Map[Int, Int] =
       MetadataUtils.getCategoricalFeatures(dataset.schema($(featuresCol)))
-    val oldDataset: RDD[LabeledPoint] = extractLabeledPoints(dataset)
-    val strategy = getOldStrategy(categoricalFeatures)
+    val numClasses: Int = getNumClasses(dataset)
+
+    if (isDefined(thresholds)) {
+      require($(thresholds).length == numClasses, this.getClass.getSimpleName +
+        ".train() called with non-matching numClasses and thresholds.length." +
+        s" numClasses=$numClasses, but thresholds has length ${$(thresholds).length}")
+    }
+
+    val oldDataset: RDD[LabeledPoint] = extractLabeledPoints(dataset, numClasses)
+    val strategy = getOldStrategy(categoricalFeatures, numClasses)
 
     val instr = Instrumentation.create(this, oldDataset)
     instr.logParams(params: _*)
@@ -105,43 +111,44 @@ class OptimizedDecisionTreeRegressor @Since("1.4.0") (@Since("1.4.0") override v
     val trees = OptimizedRandomForest.run(oldDataset, strategy, numTrees = 1, featureSubsetStrategy = "all",
       seed = $(seed), instr = Some(instr), parentUID = Some(uid))
 
-    val m = trees.head.asInstanceOf[DecisionTreeRegressionModel]
+    val m = trees.head.asInstanceOf[DecisionTreeClassificationModel]
     instr.logSuccess(m)
     m
   }
 
-  /** Train a decision tree on an RDD */
-  protected def train(
-                      data: RDD[LabeledPoint],
-                      oldStrategy: OldStrategy,
-                      featureSubsetStrategy: String): DecisionTreeRegressionModel = {
+  /** (private[ml]) Train a decision tree on an RDD */
+  private[ml] def train(data: RDD[LabeledPoint],
+                        oldStrategy: OldStrategy): DecisionTreeClassificationModel = {
     val instr = Instrumentation.create(this, data)
     instr.logParams(params: _*)
 
-    val trees = OptimizedRandomForest.run(data, oldStrategy, numTrees = 1, featureSubsetStrategy,
-      seed = $(seed), instr = Some(instr), parentUID = Some(uid))
+    val trees = OptimizedRandomForest.run(data, oldStrategy, numTrees = 1, featureSubsetStrategy = "all",
+      seed = 0L, instr = Some(instr), parentUID = Some(uid))
 
-    val m = trees.head.asInstanceOf[DecisionTreeRegressionModel]
+    val m = trees.head.asInstanceOf[DecisionTreeClassificationModel]
     instr.logSuccess(m)
     m
   }
 
   /** (private[ml]) Create a Strategy instance to use with the old API. */
-  private[ml] def getOldStrategy(categoricalFeatures: Map[Int, Int]): OldStrategy = {
-    super.getOldStrategy(categoricalFeatures, numClasses = 0, OldAlgo.Regression, getOldImpurity,
+  private[ml] def getOldStrategy(
+                                  categoricalFeatures: Map[Int, Int],
+                                  numClasses: Int): OldStrategy = {
+    super.getOldStrategy(categoricalFeatures, numClasses, OldAlgo.Classification, getOldImpurity,
       subsamplingRate = 1.0)
   }
 
-  @Since("1.4.0")
-  override def copy(extra: ParamMap): OptimizedDecisionTreeRegressor = defaultCopy(extra)
+  @Since("1.4.1")
+  override def copy(extra: ParamMap): OptimizedDecisionTreeClassifier = defaultCopy(extra)
 }
 
 @Since("1.4.0")
-object OptimizedDecisionTreeRegressor extends DefaultParamsReadable[OptimizedDecisionTreeRegressor] {
-  /** Accessor for supported impurities: variance */
-  final val supportedImpurities: Array[String] = TreeRegressorParams.supportedImpurities
+object OptimizedDecisionTreeClassifier extends DefaultParamsReadable[OptimizedDecisionTreeClassifier] {
+  /** Accessor for supported impurities: entropy, gini */
+  @Since("1.4.0")
+  final val supportedImpurities: Array[String] = TreeClassifierParams.supportedImpurities
 
   @Since("2.0.0")
-  override def load(path: String): OptimizedDecisionTreeRegressor = super.load(path)
+  override def load(path: String): OptimizedDecisionTreeClassifier = super.load(path)
 }
 

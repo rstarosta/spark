@@ -19,11 +19,13 @@ package org.apache.spark.ml.tree.impl
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.ml.Estimator
+import org.apache.spark.ml.classification.{DecisionTreeClassifier, OptimizedDecisionTreeClassifier}
 import org.apache.spark.ml.feature.LabeledPoint
 import org.apache.spark.ml.linalg.Vectors
 import org.apache.spark.ml.regression.{DecisionTreeRegressor, OptimizedDecisionTreeRegressor}
 import org.apache.spark.mllib.tree.DecisionTreeSuite
 import org.apache.spark.mllib.util.{LogisticRegressionDataGenerator, MLlibTestSparkContext}
+import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.DataFrame
 
 /** Tests checking equivalence of trees produced by local and distributed tree training. */
@@ -54,10 +56,39 @@ class OptimizedDecisionTreeIntegrationSuite extends SparkFunSuite with MLlibTest
     TreeTests.checkEqual(newModel, oldModel)
   }
 
+//  private def testOldApiEquivalence(train: RDD[LabeledPoint], testParams: Map[String, Any]): Unit = {
+//    val oldTree = setParams(new DecisionTreeRegressor(), testParams)
+//    val newTree = setParams(new OptimizedDecisionTreeRegressor(), testParams)
+//    val newModel = newTree.fit(train)
+//    val oldModel = oldTree.fit(train)
+//    TreeTests.checkEqual(newModel, oldModel)
+//  }
+
+  private def testClassifierEquivalence(train: DataFrame, testParams: Map[String, Any]): Unit = {
+    val oldTree = setParams(new DecisionTreeClassifier(), testParams)
+    val newTree = setParams(new OptimizedDecisionTreeClassifier(), testParams)
+    val newModel = newTree.fit(train)
+    val model = oldTree.fit(train)
+    TreeTests.checkEqual(newModel, model)
+  }
+
   test("Local & distributed training produce the same tree on a toy dataset") {
     val data = sc.parallelize(Range(0, 8).map(x => LabeledPoint(x, Vectors.dense(x))))
     val df = spark.createDataFrame(data)
     testEquivalence(df, TreeTests.allParamSettings)
+    testClassifierEquivalence(df, TreeTests.allParamSettings)
+  }
+
+  test("asfd Local & distributed training produce the same tree on a toy dataset") {
+    val data = sc.parallelize(Range(0, 8).map(x => {
+     if (x > 3) {
+       LabeledPoint(x, Vectors.dense(0.0))
+     } else {
+       LabeledPoint(x, Vectors.dense(1.0))
+     }}))
+    val df = spark.createDataFrame(data)
+    testEquivalence(df, TreeTests.allParamSettings)
+    testClassifierEquivalence(df, TreeTests.allParamSettings)
   }
 
   test("Local & distributed training produce the same tree on a slightly larger toy dataset") {

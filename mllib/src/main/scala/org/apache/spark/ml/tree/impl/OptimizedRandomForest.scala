@@ -203,6 +203,10 @@ private[spark] object OptimizedRandomForest extends Logging {
       timer.stop("findBestSplits")
     }
 
+    // TODO: Take only some nodes of the tree and repartition the data points
+    //       so that only data for one node is on one executor.
+    //       Partition instead of group by, then mapPartitions
+    // TODO: Address no node cache situation
     Range(0, numTrees)
       .filter(i => localTrainingSets(i).nonEmpty)
       .foreach(treeIndex => {
@@ -222,14 +226,14 @@ private[spark] object OptimizedRandomForest extends Logging {
             metadata, splits, Some(localMaxDepth))
         }).collect()
 
-        finished.foreach(learningNode => {
-          val parent = LearningNode.getNode(
-            LearningNode.parentIndex(learningNode.id), topNodes(treeIndex))
-          if(LearningNode.isLeftChild(learningNode.id)) {
-            parent.leftChild = Some(learningNode)
-          } else {
-            parent.rightChild = Some(learningNode)
-          }
+      finished.foreach(learningNode => {
+        val parent = LearningNode.getNode(
+          LearningNode.parentIndex(learningNode.id), topNodes(treeIndex))
+        if(LearningNode.isLeftChild(learningNode.id)) {
+          parent.leftChild = Some(learningNode)
+        } else {
+          parent.rightChild = Some(learningNode)
+        }
       })
     })
     baggedInput.unpersist()

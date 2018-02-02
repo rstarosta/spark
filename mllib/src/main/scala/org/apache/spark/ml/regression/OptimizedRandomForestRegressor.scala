@@ -109,6 +109,26 @@ class OptimizedRandomForestRegressor @Since("1.4.0") (@Since("1.4.0") override v
   override def setFeatureSubsetStrategy(value: String): this.type =
     set(featureSubsetStrategy, value)
 
+  protected def train(data: RDD[LabeledPoint],
+                      categoricalFeatures: Map[Int, Int]): RandomForestRegressionModel = {
+    val strategy =
+      super.getOldStrategy(categoricalFeatures, numClasses = 0, OldAlgo.Regression, getOldImpurity)
+
+    val instr = Instrumentation.create(this, data)
+    instr.logParams(labelCol, featuresCol, predictionCol, impurity, numTrees,
+      featureSubsetStrategy, maxDepth, maxBins, maxMemoryInMB, minInfoGain,
+      minInstancesPerNode, seed, subsamplingRate, cacheNodeIds, checkpointInterval)
+
+    val trees = OptimizedRandomForest
+      .run(data, strategy, getNumTrees, getFeatureSubsetStrategy, getSeed, Some(instr))
+      .map(_.asInstanceOf[DecisionTreeRegressionModel])
+
+    val numFeatures = data.first().features.size
+    val m = new RandomForestRegressionModel(uid, trees, numFeatures)
+    instr.logSuccess(m)
+    m
+  }
+
   override protected def train(dataset: Dataset[_]): RandomForestRegressionModel = {
     val categoricalFeatures: Map[Int, Int] =
       MetadataUtils.getCategoricalFeatures(dataset.schema($(featuresCol)))

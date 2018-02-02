@@ -19,6 +19,7 @@ package org.apache.spark.ml.tree.impl
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.ml.Estimator
+import org.apache.spark.ml.classification.DecisionTreeClassifier
 import org.apache.spark.ml.feature.LabeledPoint
 import org.apache.spark.ml.linalg.Vectors
 import org.apache.spark.ml.regression.DecisionTreeRegressor
@@ -53,6 +54,7 @@ class LocalTreeIntegrationSuite extends SparkFunSuite with MLlibTestSparkContext
     val model = distribTree.fit(train)
     TreeTests.checkEqual(localModel, model)
   }
+
 
   test("Local & distributed training produce the same tree on a toy dataset") {
     val data = sc.parallelize(Range(0, 8).map(x => LabeledPoint(x, Vectors.dense(x))))
