@@ -326,7 +326,7 @@ class OptimizedRandomForestSuite extends SparkFunSuite with MLlibTestSparkContex
     )))
     val nodeStack = new mutable.ArrayStack[(Int, LearningNode)]
     val localTrainingStack = new mutable.ArrayStack[(Int, LearningNode)]
-    val localTrainingSets = Array.fill[mutable.Set[LearningNode]](metadata.numTrees)(mutable.Set.empty)
+    val localTrainingSets = Array.fill[mutable.ArrayStack[LearningNode]](metadata.numTrees)(new mutable.ArrayStack[LearningNode]())
     val maxMemoryUsage = 100 * 1024L * 1024L
     OptimizedRandomForest.findBestSplits(baggedInput, metadata, Map(0 -> topNode),
       nodesForGroup, treeToNodeToIndexInfo, splits, (nodeStack, localTrainingStack, localTrainingSets), maxMemoryUsage)
@@ -371,7 +371,7 @@ class OptimizedRandomForestSuite extends SparkFunSuite with MLlibTestSparkContex
     )))
     val nodeStack = new mutable.ArrayStack[(Int, LearningNode)]
     val localTrainingStack = new mutable.ArrayStack[(Int, LearningNode)]
-    val localTrainingSets = Array.fill[mutable.Set[LearningNode]](metadata.numTrees)(mutable.Set.empty)
+    val localTrainingSets = Array.fill[mutable.ArrayStack[LearningNode]](metadata.numTrees)(new mutable.ArrayStack[LearningNode]())
     val maxMemoryUsage = 100 * 1024L * 1024L
     OptimizedRandomForest.findBestSplits(baggedInput, metadata, Map(0 -> topNode),
       nodesForGroup, treeToNodeToIndexInfo, splits, (nodeStack, localTrainingStack, localTrainingSets), maxMemoryUsage)

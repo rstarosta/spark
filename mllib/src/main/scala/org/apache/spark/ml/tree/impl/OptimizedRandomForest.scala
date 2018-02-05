@@ -19,9 +19,10 @@ package org.apache.spark.ml.tree.impl
 
 import java.io.IOException
 
-import scala.collection.{mutable, SeqView}
-import scala.util.Random
+import org.apache.spark.Partitioner
 
+import scala.collection.{SeqView, mutable}
+import scala.util.Random
 import org.apache.spark.internal.Logging
 import org.apache.spark.ml.classification.DecisionTreeClassificationModel
 import org.apache.spark.ml.feature.LabeledPoint
@@ -171,7 +172,7 @@ private[spark] object OptimizedRandomForest extends Logging {
      */
     val nodeStack = new mutable.ArrayStack[(Int, LearningNode)]
     val localTrainingStack = new mutable.ArrayStack[(Int, LearningNode)]
-    val localTrainingSets = Array.fill[mutable.Set[LearningNode]](numTrees)(mutable.Set.empty)
+    val localTrainingSets = Array.fill[mutable.ArrayStack[LearningNode]](numTrees)(new mutable.ArrayStack[LearningNode])
 
     val rng = new Random()
     rng.setSeed(seed)
@@ -207,35 +208,90 @@ private[spark] object OptimizedRandomForest extends Logging {
     //       so that only data for one node is on one executor.
     //       Partition instead of group by, then mapPartitions
     // TODO: Address no node cache situation
+//    Range(0, numTrees)
+//      .filter(i => localTrainingSets(i).nonEmpty)
+//      .foreach(treeIndex => {
+//      val finished = baggedInput.zip(nodeIdCache.get.nodeIdsForInstances)
+//        .map(x => (x._2(treeIndex), x._1.datum))
+//        .groupByKey()
+//        .map(nodePoints => {
+//          val points = nodePoints._2.toArray
+//          val node = LearningNode.getNode(nodePoints._1, topNodes(treeIndex))
+//
+//          val currentLevel = LearningNode.indexToLevel(nodePoints._1)
+//          val localMaxDepth = metadata.maxDepth - currentLevel
+//
+//          val instanceWeights = Array.fill[Double](points.length)(1.0)
+//
+//          LocalDecisionTree.fitNode(points, instanceWeights, node,
+//            metadata, splits, Some(localMaxDepth))
+//        }).collect()
+//
+//      finished.foreach(learningNode => {
+//        val parent = LearningNode.getNode(
+//          LearningNode.parentIndex(learningNode.id), topNodes(treeIndex))
+//        if(LearningNode.isLeftChild(learningNode.id)) {
+//          parent.leftChild = Some(learningNode)
+//        } else {
+//          parent.rightChild = Some(learningNode)
+//        }
+//      })
+//    })
+
+    val numExecutors = 2
+
     Range(0, numTrees)
       .filter(i => localTrainingSets(i).nonEmpty)
       .foreach(treeIndex => {
-      val finished = baggedInput.zip(nodeIdCache.get.nodeIdsForInstances)
-        .map(x => (x._2(treeIndex), x._1.datum))
-        .groupByKey()
-        .map(nodePoints => {
-          val points = nodePoints._2.toArray
-          val node = LearningNode.getNode(nodePoints._1, topNodes(treeIndex))
+        while (localTrainingSets(treeIndex).nonEmpty) {
+          var i = 0
+          val nodeIdMapping = mutable.Map[Int, Int]()
 
-          val currentLevel = LearningNode.indexToLevel(nodePoints._1)
-          val localMaxDepth = metadata.maxDepth - currentLevel
+          while (i < numExecutors && localTrainingSets(treeIndex).nonEmpty) {
+            val node = localTrainingSets(treeIndex).pop()
+            nodeIdMapping(node.id) = i
+            i += 1
+          }
 
-          val instanceWeights = Array.fill[Double](points.length)(1.0)
+          // TODO: Should I partition right after zip (is the pair actually necessary?)
+          val partitioned = baggedInput
+            .zip(nodeIdCache.get.nodeIdsForInstances)
+            .map(x => (x._2(treeIndex), x._1.datum))
+            .filter(x => nodeIdMapping.keySet.contains(x._1))
+            .partitionBy(new NodeIdPartitioner(numExecutors, nodeIdMapping.toMap))
 
-          LocalDecisionTree.fitNode(points, instanceWeights, node,
-            metadata, splits, Some(localMaxDepth))
-        }).collect()
+           val finished = partitioned
+            .mapPartitions(partition => {
+              if (partition.isEmpty) {
+                Iterator.empty
+              }
+              else {
+                val (nodeId, firstPoint) = partition.next()
+                val points = Array(firstPoint) ++ partition.map(x => x._2)
+                val node = LearningNode.getNode(nodeId, topNodes(treeIndex))
 
-      finished.foreach(learningNode => {
-        val parent = LearningNode.getNode(
-          LearningNode.parentIndex(learningNode.id), topNodes(treeIndex))
-        if(LearningNode.isLeftChild(learningNode.id)) {
-          parent.leftChild = Some(learningNode)
-        } else {
-          parent.rightChild = Some(learningNode)
+                val currentLevel = LearningNode.indexToLevel(nodeId)
+                val localMaxDepth = metadata.maxDepth - currentLevel
+
+                val instanceWeights = Array.fill[Double](points.length)(1.0)
+
+                Iterator(LocalDecisionTree.fitNode(points, instanceWeights, node,
+                  metadata, splits, Some(localMaxDepth)))
+              }
+            }).collect()
+
+          finished.foreach(learningNode => {
+            val parent = LearningNode.getNode(
+              LearningNode.parentIndex(learningNode.id), topNodes(treeIndex))
+            if (LearningNode.isLeftChild(learningNode.id)) {
+              parent.leftChild = Some(learningNode)
+            } else {
+              parent.rightChild = Some(learningNode)
+            }
+          })
         }
       })
-    })
+
     baggedInput.unpersist()
 
     timer.stop("total")
@@ -395,7 +451,7 @@ private[spark] object OptimizedRandomForest extends Logging {
       treeToNodeToIndexInfo: Map[Int, Map[Int, NodeIndexInfo]],
       splits: Array[Array[Split]],
       stacks: (mutable.ArrayStack[(Int, LearningNode)], mutable.ArrayStack[(Int, LearningNode)],
-        Array[mutable.Set[LearningNode]]),
+        Array[mutable.ArrayStack[LearningNode]]),
       maxMemoryUsage: Long,
       timer: TimeTracker = new TimeTracker,
       nodeIdCache: Option[NodeIdCache] = None): Unit = {
@@ -647,7 +703,7 @@ private[spark] object OptimizedRandomForest extends Logging {
           if (!leftChildIsLeaf) {
             if (canSplitLocally) {
               localTrainingStack.push((treeIndex, node.leftChild.get))
-              localTrainingSets(treeIndex).add(node.leftChild.get)
+              localTrainingSets(treeIndex).push(node.leftChild.get)
             } else {
               nodeStack.push((treeIndex, node.leftChild.get))
             }
@@ -655,7 +711,7 @@ private[spark] object OptimizedRandomForest extends Logging {
           if (!rightChildIsLeaf) {
             if (canSplitLocally) {
               localTrainingStack.push((treeIndex, node.rightChild.get))
-              localTrainingSets(treeIndex).add(node.rightChild.get)
+              localTrainingSets(treeIndex).push(node.rightChild.get)
             } else {
               nodeStack.push((treeIndex, node.rightChild.get))
             }
@@ -1042,5 +1098,16 @@ private[spark] object OptimizedRandomForest extends Logging {
       3 * totalBins
     }
   }
+}
 
+private class NodeIdPartitioner(override val numPartitions: Int,
+                                   val nodeIdPartitionMapping: Map[Int, Int])
+  extends Partitioner {
+
+  def getPartition(key: Any): Int = {
+    val k = key.asInstanceOf[Int]
+
+    // orElse part should never happen
+    nodeIdPartitionMapping.getOrElse(k, 1)
+  }
 }
